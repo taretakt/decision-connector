@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "decision-connector"
+version = "0.1.0"
+description = "Domain-agnostic substrate between structured systems and Jev's typed decision primitives (Choice / Noul / Score)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Ross MacDonald" }]
+keywords = ["decision-engine", "jev", "deterministic", "llm", "cache", "structured-output"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Libraries",
+]
+
+[tool.setuptools]
+py-modules = ["decision_connector", "bucket_delineation"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
