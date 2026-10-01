@@ -41,6 +41,7 @@ Four domains shipped — two reference adapters inside the substrate's self-test
 | QC disposition | defect signature | dispositions | reference adapter |
 | [Deal scoring](deal_scoring_adapter.py) | listing | grades (buy / hold / pass / scrap) | adapter file |
 | [Catalog watchdog](catalog_watchdog_adapter.py) | page pair | verdicts (no_digest / digest / escalate) | adapter file |
+| [Resource triage](resource_triage_adapter.py) | resource | theme → depth → verdict (3-stage pipeline) | adapter file |
 
 `bucket_delineation.py` is the companion instrument: it perturbs state semantically to find where decisions flip and which input fields the decision is actually sensitive to — those are the fields that must be quantized.
 
@@ -67,6 +68,7 @@ uv run python3 bucket_delineation.py     # stability probe, raw vs canonicalized
 uv run python3 test_call_efficiency.py   # call-count assertions
 uv run python3 deal_scoring_adapter.py   # plug-in domain demo
 uv run python3 catalog_watchdog_adapter.py
+uv run python3 resource_triage_adapter.py
 uv run pytest                            # test suite
 ```
 
@@ -86,6 +88,7 @@ The SQLite grid path is configurable via `DECISION_GRID_DB` (default: `./grid.db
 | `bucket_delineation.py` | Stability prober + field ablation (quantization targeting) |
 | `deal_scoring_adapter.py` | Plug-in domain: listing × grades |
 | `catalog_watchdog_adapter.py` | Plug-in domain: page pair × verdicts |
+| `resource_triage_adapter.py` | Plug-in domain: resource funnel (theme → content → consumption) |
 | `test_call_efficiency.py` | Call-count and cache-hit assertions |
 | `tests/` | Pytest suite |
 

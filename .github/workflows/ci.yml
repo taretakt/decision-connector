@@ -20,3 +20,4 @@ jobs:
       - run: uv run python test_call_efficiency.py
       - run: uv run python deal_scoring_adapter.py
       - run: uv run python catalog_watchdog_adapter.py
+      - run: uv run python resource_triage_adapter.py
