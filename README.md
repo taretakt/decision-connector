@@ -31,14 +31,33 @@ Two evaluation modes:
 - **ONE_SHOT** — one Jev call, grid rows for every candidate (six rows, one call)
 - **PER_CANDIDATE** — one judgment per candidate, each row cached (warm re-runs cost zero calls)
 
-## Reference adapters
+## Domains
 
-Two shipped as worked examples — the pattern transfers, the adapter is the only custom part:
+Four domains shipped — two reference adapters inside the substrate's self-test, two plug-in files that prove the pattern:
 
-- `CompatalogFitmentAdapter` — automotive part fitment (does this part go on this vehicle?)
-- `QCDispositionAdapter` — manufacturing QC disposition (rework / scrap / ship? Acceptable to ship?)
+| Domain | subject | candidates | ships as |
+|---|---|---|---|
+| Compalog fitment | vehicle | parts | reference adapter |
+| QC disposition | defect signature | dispositions | reference adapter |
+| [Deal scoring](deal_scoring_adapter.py) | listing | grades (buy / hold / pass / scrap) | adapter file |
+| [Catalog watchdog](catalog_watchdog_adapter.py) | page pair | verdicts (no_digest / digest / escalate) | adapter file |
 
 `bucket_delineation.py` is the companion instrument: it perturbs state semantically to find where decisions flip and which input fields the decision is actually sensitive to — those are the fields that must be quantized.
+
+### Adding a domain
+
+One file, six members, zero substrate changes:
+
+```python
+class MyAdapter:
+    name = "domain.decision-name"
+    evaluation_mode = "one_shot" | "per_candidate"   # the cost lever
+    def subject_key(self, subject) -> str                       # grid row
+    def candidate_keys(self, subject, candidates) -> list[str]  # grid columns
+    def state_for(self, subject, candidates) -> str             # → Jev state
+    def questions_for(self, subject, candidates, candidate_key) -> dict
+    def canonical(self, response, candidate_key) -> dict         # → Decision
+```
 
 ## Run
 
@@ -46,6 +65,8 @@ Two shipped as worked examples — the pattern transfers, the adapter is the onl
 uv run python3 decision_connector.py     # offline self-test, both domains
 uv run python3 bucket_delineation.py     # stability probe, raw vs canonicalized
 uv run python3 test_call_efficiency.py   # call-count assertions
+uv run python3 deal_scoring_adapter.py   # plug-in domain demo
+uv run python3 catalog_watchdog_adapter.py
 uv run pytest                            # test suite
 ```
 
@@ -63,6 +84,8 @@ The SQLite grid path is configurable via `DECISION_GRID_DB` (default: `./grid.db
 |---|---|
 | `decision_connector.py` | Connector substrate: primitives, grid, cache, routing, self-test |
 | `bucket_delineation.py` | Stability prober + field ablation (quantization targeting) |
+| `deal_scoring_adapter.py` | Plug-in domain: listing × grades |
+| `catalog_watchdog_adapter.py` | Plug-in domain: page pair × verdicts |
 | `test_call_efficiency.py` | Call-count and cache-hit assertions |
 | `tests/` | Pytest suite |
 

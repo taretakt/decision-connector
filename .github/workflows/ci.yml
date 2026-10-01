@@ -18,3 +18,5 @@ jobs:
       - run: uv run python decision_connector.py
       - run: uv run python bucket_delineation.py
       - run: uv run python test_call_efficiency.py
+      - run: uv run python deal_scoring_adapter.py
+      - run: uv run python catalog_watchdog_adapter.py
