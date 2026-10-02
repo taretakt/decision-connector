@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from resource_triage_adapter import (
     DEFAULT_THEMES,
+    ScrobblerContext,
     ScriptedClient,
     TriagePipeline,
 )
@@ -164,12 +165,23 @@ def real_client():
 # ── queue persistence ──────────────────────────────────────────────────
 
 def write_queue(rows, db_path, tag="funnel"):
-    """Insert emit() rows into a queue table. Returns number written."""
+    """Insert emit() rows into a queue table. Returns number written.
+
+    Dedupes against URLs already present in the target queue — the hopper
+    never receives the same resource twice.
+    """
     import sqlite3
     conn = sqlite3.connect(db_path)
     conn.executescript(QUEUE_SCHEMA)
+    try:
+        existing = {r[0] for r in conn.execute("SELECT url FROM queue WHERE url IS NOT NULL")}
+    except sqlite3.OperationalError:
+        existing = set()
     n = 0
     for row in rows:
+        if row.get("url") in existing:
+            continue
+        existing.add(row.get("url"))
         pri = row.get("priority")
         pri = int(pri.lstrip("P")) if isinstance(pri, str) and pri.startswith("P") else None
         conn.execute(
@@ -195,6 +207,11 @@ def main(argv=None):
     ap.add_argument("--out", help="write queue-ready rows to PATH.json")
     ap.add_argument("--write-queue", metavar="DB", nargs="?", const="~/.hermes/personal_life.db",
                     help="insert rows into a queue table (opt-in)")
+    ap.add_argument("--hopper", metavar="DB", nargs="?",
+                    const=os.environ.get("SCROBBLER_DB", "~/.hermes/personal_life.db"),
+                    help="load scrobbler context (already-queued/consumed, channel track, "
+                         "backlog) from this DB and feed it to every stage; implies "
+                         "--write-queue to the same DB")
     ap.add_argument("--live", action="store_true", help="real Jev judgment (needs typesafe_sdk + TYPESAFE_API_KEY)")
     ap.add_argument("--db", default="triage_funnel.db", help="grid db path")
     args = ap.parse_args(argv)
@@ -219,11 +236,25 @@ def main(argv=None):
         print("funnel: --live requested but typesafe_sdk/TYPESAFE_API_KEY unavailable.", file=sys.stderr)
         return 2
 
+    ctx = None
+    hopper_db = None
+    if args.hopper:
+        hopper_db = os.path.expanduser(args.hopper)
+        if not os.path.exists(hopper_db):
+            print(f"funnel: --hopper db not found: {hopper_db}", file=sys.stderr)
+            return 1
+        ctx = ScrobblerContext.load(hopper_db)
+        print(f"funnel: hopper context @ {hopper_db} — "
+              f"{len(ctx.queued_urls)} queued, {len(ctx.consumed_urls)} consumed, "
+              f"backlog P1={ctx.backlog_by_priority.get('P1', 0)} "
+              f"P2={ctx.backlog_by_priority.get('P2', 0)}")
+
     with tempfile.TemporaryDirectory() as td:
         grid = os.path.join(td, "grid.db")
         pipe = TriagePipeline(db_path=grid if not args.live else args.db,
                               client=client or ScriptedClient(canned_script(len(resources))),
-                              themes=DEFAULT_THEMES)
+                              themes=DEFAULT_THEMES,
+                              context=ctx)
         results = [pipe.triage(r) for r in resources]
 
     rows = [t.emit() for t in results]
@@ -253,10 +284,15 @@ def main(argv=None):
             json.dump(rows, fh, indent=2)
         print(f"  wrote {len(rows)} queue-ready rows -> {args.out}")
 
-    if args.write_queue:
-        path = os.path.expanduser(args.write_queue)
-        n = write_queue(rows, path, tag="funnel")
-        print(f"  wrote {n} rows into queue table @ {path}  (opt-in)")
+    write_target = hopper_db
+    if not write_target and args.write_queue:
+        write_target = os.path.expanduser(args.write_queue)
+    if write_target:
+        rows = [t.emit() for t in results if t.verdict != "skip"]
+        n = write_queue(rows, write_target, tag="funnel")
+        skips = sum(1 for t in results if t.verdict == "skip")
+        print(f"  wrote {n} rows into queue table @ {write_target} "
+              f"({skips} skips, {len(results) - n - skips} dupes blocked)")
 
     return 0
 

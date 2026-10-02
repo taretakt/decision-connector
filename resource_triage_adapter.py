@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections import Counter
 from typing import Any, Mapping, Optional
 
 from decision_connector import (
@@ -72,6 +73,24 @@ ACTIONS = ["watch_now", "deep_read", "skim", "apply", "reference"]
 # ══════════════════════════════════════════════════════════════════════
 #  Stage 1 — theme
 # ══════════════════════════════════════════════════════════════════════
+
+def _facts_state(resource: dict) -> str:
+    """Render scrobbler enrichment facts for the prompt, when present."""
+    parts = []
+    if resource.get("already_consumed"):
+        parts.append("ALREADY CONSUMED — you've scrobbled this exact URL before")
+    elif resource.get("already_queued"):
+        parts.append("ALREADY QUEUED — this exact URL is in the hopper")
+    if resource.get("channel_track") is not None:
+        parts.append(f"channel track record: {resource['channel_track']} prior scrobbles")
+    if resource.get("channel_freq"):
+        parts.append(f"channel appears {resource['channel_freq']}x in the corpus")
+    if "backlog_P1" in resource:
+        parts.append(f"hopper backlog: P1={resource.get('backlog_P1', 0)} "
+                     f"P2={resource.get('backlog_P2', 0)} "
+                     f"P3={resource.get('backlog_P3', 0)}")
+    return "\n".join(parts)
+
 
 class ResourceThemeAdapter:
     """Which theme does this resource belong to? one_shot over the theme set."""
@@ -203,6 +222,9 @@ class ResourceConsumptionAdapter:
             parts.append(f"theme: {resource['theme']}")
         if resource.get("depth"):
             parts.append(f"content depth: {resource['depth']}")
+        f = _facts_state(resource)
+        if f:
+            parts.append(f)
         return "\n".join(parts)
 
     def questions_for(self, resource, candidates, candidate_key):
@@ -272,6 +294,9 @@ class ResourceSourceAdapter:
                  f"channel: {resource.get('channel', '')}"]
         if resource.get("duration_mins"):
             parts.append(f"duration: {resource['duration_mins']} minutes")
+        f = _facts_state(resource)
+        if f:
+            parts.append(f)
         return "\n".join(parts)
 
     def questions_for(self, resource, candidates, candidate_key):
@@ -335,6 +360,9 @@ class ResourceFreshnessAdapter:
             parts.append(f"type: {resource['content_type']}")
         if resource.get("theme"):
             parts.append(f"theme: {resource['theme']}")
+        f = _facts_state(resource)
+        if f:
+            parts.append(f)
         return "\n".join(parts)
 
     def questions_for(self, resource, candidates, candidate_key):
@@ -398,6 +426,9 @@ class ResourceActionAdapter:
             parts.append(f"verdict: {resource['verdict']}")
         if resource.get("priority"):
             parts.append(f"priority: {resource['priority']}")
+        f = _facts_state(resource)
+        if f:
+            parts.append(f)
         return "\n".join(parts)
 
     def questions_for(self, resource, candidates, candidate_key):
@@ -462,6 +493,7 @@ class TriageResult:
     commitment: Optional[float] = None
     payoff: Optional[str] = None
     route: Optional[str] = None
+    notes: Optional[str] = None
 
     def emit(self) -> dict:
         """Queue-ready row, shaped for the scrobbler queue schema."""
@@ -474,10 +506,76 @@ class TriageResult:
             "priority": self.priority,
             "verdict": self.verdict,
             "depth": self.depth,
-            "notes": (f"theme={self.theme}; source={self.source_tier}; "
+                        "notes": (f"theme={self.theme}; source={self.source_tier}; "
                       f"freshness={self.freshness}; action={self.action}; "
-                      f"commitment={self.commitment}; payoff={self.payoff}"),
+                      f"{self.notes or ''}").strip("; ")        }
+
+
+@dataclass
+class ScrobblerContext:
+    """What the scrobbler already knows — injected into every stage's state.
+
+    Each stage's prompt then carries facts beyond the bare resource: whether
+    it's already queued/consumed, the channel's consumption track record, and
+    current backlog pressure. Judgment is made against what you've already
+    done, not just what this one link is.
+    """
+    queued_urls: set = field(default_factory=set)
+    consumed_urls: set = field(default_factory=set)
+    channel_scrobbles: Counter = field(default_factory=Counter)
+    backlog_by_priority: Counter = field(default_factory=Counter)
+    channel_freq: Counter = field(default_factory=Counter)
+
+    def facts_for(self, resource: dict, stage: str) -> dict:
+        url = resource.get("url", "")
+        facts = {
+            "already_queued": url in self.queued_urls,
+            "already_consumed": url in self.consumed_urls,
+            "backlog_P1": self.backlog_by_priority.get("P1", 0),
+            "backlog_P2": self.backlog_by_priority.get("P2", 0),
+            "backlog_P3": self.backlog_by_priority.get("P3", 0),
         }
+        chan = resource.get("channel") or resource.get("author")
+        if chan:
+            facts["channel_track"] = self.channel_scrobbles.get(chan, 0)
+        if resource.get("channel_freq") or self.channel_freq.get(chan or ""):
+            facts["channel_freq"] = resource.get("channel_freq") or \
+                self.channel_freq.get(chan or "", 0)
+        return facts
+
+    @classmethod
+    def load(cls, db_path, channel_freq: Counter | None = None):
+        """Read the scrobbler DB (queue + scrobbles tables) defensively.
+
+        Missing tables / unreadable DB / foreign schema all degrade to an
+        empty context — enrichment is a bonus, never a hard dependency.
+        """
+        import sqlite3
+        queued, consumed = set(), set()
+        chan_sc, backlog = Counter(), Counter()
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if "queue" in tables:
+                for r in conn.execute("SELECT url, priority, status FROM queue"):
+                    if r["url"]:
+                        queued.add(r["url"])
+                    if r["status"] != "done" and r["priority"]:
+                        backlog[f"P{int(r['priority'])}"] += 1
+            if "scrobbles" in tables:
+                for r in conn.execute("SELECT url, creator FROM scrobbles"):
+                    if r["url"]:
+                        consumed.add(r["url"])
+                    if r["creator"]:
+                        chan_sc[r["creator"]] += 1
+            conn.close()
+        except Exception:
+            pass
+        return cls(queued_urls=queued, consumed_urls=consumed,
+                  channel_scrobbles=chan_sc, backlog_by_priority=backlog,
+                  channel_freq=channel_freq or Counter())
 
 
 class TriagePipeline:
@@ -487,8 +585,10 @@ class TriagePipeline:
     """
 
     def __init__(self, db_path="triage.db", client=None,
-                 themes: Mapping[str, str] = DEFAULT_THEMES):
+                 themes: Mapping[str, str] = DEFAULT_THEMES,
+                 context: ScrobblerContext | None = None):
         self.themes = dict(themes)
+        self.context = context
         self._theme = DecisionConnector(ResourceThemeAdapter(themes),
                                         db_path=db_path, client=client)
         self._source = DecisionConnector(ResourceSourceAdapter(),
@@ -503,6 +603,19 @@ class TriagePipeline:
                                          db_path=db_path, client=client)
 
     def triage(self, resource: dict, force: bool = False) -> TriageResult:
+        # Dedupe gate — deterministic, no judgment involved. If the scrobbler
+        # already knows this URL (queued or consumed), it does not re-enter
+        # the hopper. Returns a skip result without spending a single call.
+        if self.context and resource.get("url"):
+            if resource["url"] in self.context.consumed_urls:
+                return TriageResult(resource=resource, verdict="skip",
+                                    route="act", priority=None, action=None,
+                                    notes="already consumed (scrobbler)")
+            if resource["url"] in self.context.queued_urls:
+                return TriageResult(resource=resource, verdict="skip",
+                                    route="act", priority=None, action=None,
+                                    notes="already in queue (hopper)")
+
         # Stage 1 — theme
         rows = self._theme.evaluate(resource, None, force=force)
         winner = max(rows, key=lambda r: r.noul or 0)
@@ -510,6 +623,10 @@ class TriagePipeline:
 
         staged = dict(resource)
         staged["theme"], staged["depth"] = theme, None
+
+        # Enrichment — every later stage sees the scrobbler facts + theme.
+        if self.context:
+            staged.update(self.context.facts_for(staged, "source"))
 
         # Stage 2 — source
         rows = self._source.evaluate(staged, None, force=force)
@@ -519,6 +636,8 @@ class TriagePipeline:
         source_cred = _cred if _cred is not None else swin.noul
 
         staged["source_tier"] = source_tier
+        if self.context:
+            staged.update(self.context.facts_for(staged, "content"))
 
         # Stage 3 — content
         rows = self._content.evaluate(staged, None, force=force)
@@ -528,6 +647,8 @@ class TriagePipeline:
         substance = _sub > 0.5 if _sub is not None else None
 
         staged["depth"] = depth
+        if self.context:
+            staged.update(self.context.facts_for(staged, "freshness"))
 
         # Stage 4 — freshness
         rows = self._fresh.evaluate(staged, None, force=force)
@@ -537,6 +658,8 @@ class TriagePipeline:
         decay = _dec if _dec is not None else fwin.noul
 
         staged["freshness"] = freshness
+        if self.context:
+            staged.update(self.context.facts_for(staged, "consumption"))
 
         # Stage 5 — consumption
         rows = self._consume.evaluate(staged, None, force=force)
@@ -548,6 +671,8 @@ class TriagePipeline:
         priority = pri if isinstance(pri, str) else f"P{int(pri)}" if pri else None
 
         staged["verdict"], staged["priority"] = verdict, priority
+        if self.context:
+            staged.update(self.context.facts_for(staged, "action"))
 
         # Stage 6 — action
         rows = self._action.evaluate(staged, None, force=force)

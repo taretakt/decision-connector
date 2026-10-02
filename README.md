@@ -11,7 +11,7 @@ The connector owns the parts of decision automation that should be identical no 
 - **Invalidation** — forget only what changed, never nuke the grid
 - **Confidence routing** — low-confidence judgments route to a human, high-confidence ones flow straight through
 - **Loop-friendly batches** — `is_terminal()` tells a loop when a batch can run unattended; `flush()` closes the grid cleanly so scripts exit safely
-- **Batch funnel CLI** — run the six-layer decision tree over a corpus file with `funnel.py`, flag what needs human eyes, emit queue-ready rows
+- **Scrobbler-hopper funnel** — run the six-layer decision tree over a corpus file with `funnel.py`, enrich each stage with what the scrobbler already knows (already-queued, already-consumed, channel track record, backlog), dedupe at the gate, and write queue-ready rows into the scrobbler's `queue` table (`--hopper DB`). rows
 - **Cost accounting** — every call is priced (`$42 / billion input tokens`, ~400 tokens per call)
 - **Non-text input bridge** — structured state in, structured decisions out, no prose required
 
@@ -46,6 +46,7 @@ Five domains shipped — two reference adapters inside the substrate's self-test
 | [Deal scoring](deal_scoring_adapter.py) | listing | grades (buy / hold / pass / scrap) | adapter file |
 | [Catalog watchdog](catalog_watchdog_adapter.py) | page pair | verdicts (no_digest / digest / escalate) | adapter file |
 | [Resource triage](resource_triage_adapter.py) | resource | 6-layer tree: theme → source → content → freshness → consumption → action | adapter file |
+| [Scrobbler hopper](funnel.py) | intake gate | enrichment (queue/scrobble/backlog facts per stage) + dedupe → `queue` table | CLI `--hopper` |
 
 `bucket_delineation.py` is the companion instrument: it perturbs state semantically to find where decisions flip and which input fields the decision is actually sensitive to — those are the fields that must be quantized.
 
@@ -74,7 +75,7 @@ uv run python3 deal_scoring_adapter.py   # plug-in domain demo
 uv run python3 catalog_watchdog_adapter.py
 uv run python3 resource_triage_adapter.py
 uv run python3 funnel.py --file <corpus>  # batch: corpus → verdicts → queue rows
-uv run pytest                            # test suite (46 tests)
+uv run pytest                            # test suite (55 tests)
 ```
 
 Real-data example — run the resource funnel against a timeline of your own:
@@ -101,7 +102,7 @@ The SQLite grid path is configurable via `DECISION_GRID_DB` (default: `./grid.db
 | `deal_scoring_adapter.py` | Plug-in domain: listing × grades |
 | `catalog_watchdog_adapter.py` | Plug-in domain: page pair × verdicts |
 | `resource_triage_adapter.py` | Plug-in domain: resource funnel — 6-layer decision tree |
-| `funnel.py` | Batch CLI: corpus intake → pipeline → human-flag → queue write |
+| `funnel.py` | Batch CLI: corpus intake → enriched pipeline → human-flag → hopper queue write (`--hopper`) |
 | `test_call_efficiency.py` | Call-count and cache-hit assertions |
 | `examples/resource_triage.py` | Real-data funnel demo (timeline → queue rows) |
 | `tests/` | Pytest suite |
