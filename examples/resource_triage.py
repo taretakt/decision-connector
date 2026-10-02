@@ -77,15 +77,28 @@ def canned_script(n: int) -> dict:
     def pack(choice, prob, conf, noul, score):
         return (choice, {choice: prob}, conf, noul, score)
 
+    tiers = ["known_channel", "first_party", "aggregator", "known_channel",
+             "known_channel", "unknown"]
+    fresh = ["current", "evergreen", "dated", "current", "current", "stale"]
+    actions = ["deep_read", "apply", "skim", "reference", "apply", "reference"]
+    payoffs = ["high", "transformative", "low", "medium", "high", "medium"]
+
     return {
         "theme": [pack(themes[i % len(themes)], confs[i % len(confs)],
                        confs[i % len(confs)], 0.8, None) for i in range(n)],
+        "source": [pack(tiers[i % len(tiers)], confs[i % len(confs)],
+                        confs[i % len(confs)], 0.75, None) for i in range(n)],
         "content": [pack(depths[i % len(depths)], confs[i % len(confs)],
                          confs[i % len(confs)], 0.7 if depths[i % 6] != "fluff" else 0.3,
                          "generic") for i in range(n)],
+        "freshness": [pack(fresh[i % len(fresh)], confs[i % len(confs)],
+                           confs[i % len(confs)], 0.7, None) for i in range(n)],
         "consume": [pack(acts[i % len(acts)], confs[i % len(confs)],
                          confs[i % len(confs)], 0.75 if acts[i % 6] != "skip" else 0.3,
                          prios[i % len(prios)]) for i in range(n)],
+        "action": [pack(actions[i % len(actions)], confs[i % len(confs)],
+                        confs[i % len(confs)], 0.7, payoffs[i % len(payoffs)])
+                   for i in range(n)],
     }
 
 

@@ -29,12 +29,20 @@ def _res(**kw):
     return base
 
 
-def _script(theme=("ai_agents", 0.9), depth=("solid", 0.8),
-            verdict=("queue", 0.7), conf=0.8, noul=0.8, prio="P3"):
+def _script(theme=("ai_agents", 0.9), source=("known_channel", 0.8),
+            depth=("solid", 0.8), freshness=("current", 0.7),
+            verdict=("queue", 0.7), action=("deep_read", 0.6),
+            conf=0.8, noul=0.8, prio="P3"):
+    def one(choice, prob, misc, score=None):
+        return (choice, {choice: prob, misc: 1 - prob}, conf,
+                noul if score is None else noul, score)
     return {
-        "theme": (theme[0], {theme[0]: theme[1], "misc": 1 - theme[1]}, conf, noul, None),
-        "content": (depth[0], {depth[0]: depth[1], "noise": 1 - depth[1]}, conf, noul, "specific"),
-        "consume": (verdict[0], {verdict[0]: verdict[1], "skip": 1 - verdict[1]}, conf, noul, prio),
+        "theme": one(theme[0], theme[1], "misc"),
+        "source": one(source[0], source[1], "unknown"),
+        "content": one(depth[0], depth[1], "noise", "specific"),
+        "freshness": one(freshness[0], freshness[1], "stale"),
+        "consume": one(verdict[0], verdict[1], "skip", prio),
+        "action": one(action[0], action[1], "reference", "medium"),
     }
 
 
@@ -74,13 +82,20 @@ def test_pipeline_chains_and_emits_queue_row(tmp_path):
     t = pipe.triage(_res())
     assert isinstance(t, TriageResult)
     assert t.theme == "ai_agents"
+    assert t.source_tier == "known_channel"
     assert t.depth == "solid"
+    assert t.freshness == "current"
     assert t.verdict == "queue"
     assert t.priority == "P3"
+    assert t.action == "deep_read"
+    assert t.payoff == "medium"
     row = t.emit()
     assert row["tags"] == "ai_agents"
     assert row["priority"] == "P3"
     assert row["url"] == "https://example.org/x"
+    assert "action=deep_read" in row["notes"]
+    assert "source=known_channel" in row["notes"]
+    assert "freshness=current" in row["notes"]
     pipe.close()
 
 
@@ -89,10 +104,38 @@ def test_pipeline_warm_rerun_costs_zero_calls(tmp_path):
     pipe = TriagePipeline(db_path=str(tmp_path / "t.db"), client=client)
     pipe.triage(_res())
     first_calls = len(client.calls)
-    assert first_calls == 3  # one per stage
+    assert first_calls == 6  # one per stage
     t2 = pipe.triage(_res())
     assert len(client.calls) == first_calls  # all cache hits
     assert t2.theme == "ai_agents"
+    pipe.close()
+
+
+def test_source_stage_winner(tmp_path):
+    client = ScriptedClient(_script(source=("aggregator", 0.55)))
+    pipe = TriagePipeline(db_path=str(tmp_path / "t.db"), client=client)
+    rows = pipe._source.evaluate(_res(), None)
+    winner = max(rows, key=lambda r: r.noul or 0)
+    assert winner.choice == "aggregator"
+    pipe.close()
+
+
+def test_freshness_stage_winner(tmp_path):
+    client = ScriptedClient(_script(freshness=("evergreen", 0.85)))
+    pipe = TriagePipeline(db_path=str(tmp_path / "t.db"), client=client)
+    rows = pipe._fresh.evaluate(_res(), None)
+    winner = max(rows, key=lambda r: r.noul or 0)
+    assert winner.choice == "evergreen"
+    pipe.close()
+
+
+def test_action_stage_winner_and_payoff(tmp_path):
+    client = ScriptedClient(_script(action=("apply", 0.65)))
+    pipe = TriagePipeline(db_path=str(tmp_path / "t.db"), client=client)
+    rows = pipe._action.evaluate(_res(), None)
+    winner = max(rows, key=lambda r: r.noul or 0)
+    assert winner.choice == "apply"
+    assert winner.score == "medium"
     pipe.close()
 
 

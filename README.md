@@ -11,7 +11,7 @@ The connector owns the parts of decision automation that should be identical no 
 - **Invalidation** — forget only what changed, never nuke the grid
 - **Confidence routing** — low-confidence judgments route to a human, high-confidence ones flow straight through
 - **Loop-friendly batches** — `is_terminal()` tells a loop when a batch can run unattended; `flush()` closes the grid cleanly so scripts exit safely
-- **Batch funnel CLI** — run the whole pipeline over a corpus file with `funnel.py`, flag what needs human eyes, emit queue-ready rows
+- **Batch funnel CLI** — run the six-layer decision tree over a corpus file with `funnel.py`, flag what needs human eyes, emit queue-ready rows
 - **Cost accounting** — every call is priced (`$42 / billion input tokens`, ~400 tokens per call)
 - **Non-text input bridge** — structured state in, structured decisions out, no prose required
 
@@ -45,7 +45,7 @@ Five domains shipped — two reference adapters inside the substrate's self-test
 | QC disposition | defect signature | dispositions | reference adapter |
 | [Deal scoring](deal_scoring_adapter.py) | listing | grades (buy / hold / pass / scrap) | adapter file |
 | [Catalog watchdog](catalog_watchdog_adapter.py) | page pair | verdicts (no_digest / digest / escalate) | adapter file |
-| [Resource triage](resource_triage_adapter.py) | resource | theme → depth → verdict (3-stage pipeline) | adapter file |
+| [Resource triage](resource_triage_adapter.py) | resource | 6-layer tree: theme → source → content → freshness → consumption → action | adapter file |
 
 `bucket_delineation.py` is the companion instrument: it perturbs state semantically to find where decisions flip and which input fields the decision is actually sensitive to — those are the fields that must be quantized.
 
@@ -74,7 +74,7 @@ uv run python3 deal_scoring_adapter.py   # plug-in domain demo
 uv run python3 catalog_watchdog_adapter.py
 uv run python3 resource_triage_adapter.py
 uv run python3 funnel.py --file <corpus>  # batch: corpus → verdicts → queue rows
-uv run pytest                            # test suite (43 tests)
+uv run pytest                            # test suite (46 tests)
 ```
 
 Real-data example — run the resource funnel against a timeline of your own:
@@ -100,7 +100,7 @@ The SQLite grid path is configurable via `DECISION_GRID_DB` (default: `./grid.db
 | `bucket_delineation.py` | Stability prober + field ablation (quantization targeting) |
 | `deal_scoring_adapter.py` | Plug-in domain: listing × grades |
 | `catalog_watchdog_adapter.py` | Plug-in domain: page pair × verdicts |
-| `resource_triage_adapter.py` | Plug-in domain: resource funnel (theme → content → consumption) |
+| `resource_triage_adapter.py` | Plug-in domain: resource funnel — 6-layer decision tree |
 | `funnel.py` | Batch CLI: corpus intake → pipeline → human-flag → queue write |
 | `test_call_efficiency.py` | Call-count and cache-hit assertions |
 | `examples/resource_triage.py` | Real-data funnel demo (timeline → queue rows) |

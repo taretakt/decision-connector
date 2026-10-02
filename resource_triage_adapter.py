@@ -60,6 +60,14 @@ PRIORITY_LADDER = ["P5", "P4", "P3", "P2", "P1"]
 # suffix as an int so the REAL grid column stays honest AND f"P{n}" is exact.
 _PRIORITY_INT = {"P5": 5, "P4": 4, "P3": 3, "P2": 2, "P1": 1}
 
+# Layers 4-6 of the tree — source trust, freshness, next action.
+# The tree is now six deep: theme -> source -> content -> freshness
+# -> consumption -> action. Theme list is yours to own; these sets are
+# starter ladders like DEPTH_LADDER.
+SOURCE_TIERS = ["first_party", "known_channel", "aggregator", "unknown"]
+FRESHNESS_LADDER = ["evergreen", "current", "dated", "stale"]
+ACTIONS = ["watch_now", "deep_read", "skim", "apply", "reference"]
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  Stage 1 — theme
@@ -238,6 +246,201 @@ class ResourceConsumptionAdapter:
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  Stage 4 — source credibility (layer 4)
+# ══════════════════════════════════════════════════════════════════════
+
+class ResourceSourceAdapter:
+    """Who stands behind this resource? Tier + credibility Noul.
+
+    Kills the noise-machine channels early: an 'aggregator' that rehosts
+    recycled clips scores low on credibility and is demoted before the
+    expensive content stage ever sees it.
+    """
+
+    name = "resource.source"
+    evaluation_mode = "one_shot"
+
+    def subject_key(self, resource: dict) -> str:
+        return resource.get("url") or f"title::{resource.get('title', '?')}"
+
+    def candidate_keys(self, resource: dict, candidates: Any = None) -> list[str]:
+        return list(SOURCE_TIERS)
+
+    def state_for(self, resource: dict, candidates: Any = None) -> str:
+        parts = [f"title: {resource.get('title', '')}",
+                 f"source: {resource.get('source', '')}",
+                 f"channel: {resource.get('channel', '')}"]
+        if resource.get("duration_mins"):
+            parts.append(f"duration: {resource['duration_mins']} minutes")
+        return "\n".join(parts)
+
+    def questions_for(self, resource, candidates, candidate_key):
+        return {
+            "source_tier": Choice(
+                instructions=(
+                    "Rate who stands behind this resource. 'first_party' "
+                    "= the original author/creator; 'known_channel' = "
+                    "established publisher with a track record; "
+                    "'aggregator' = rehosts/recycles other people's "
+                    "content; 'unknown' = can't tell."
+                ),
+                criteria={t: t for t in SOURCE_TIERS},
+            ),
+            "credibility": Noul(
+                instructions=(
+                    "Does this source have a real track record of "
+                    "substance, or is it a clip-mill/affiliate funnel?"
+                ),
+                criteria=None,
+            ),
+        }
+
+    def canonical(self, response, candidate_key):
+        a = response.answers
+        return dict(
+            choice=a["source_tier"].value,
+            noul=getattr(a["credibility"], "value", None),
+            confidence=getattr(a["source_tier"], "confidence", None),
+            probabilities=dict(a["source_tier"].probabilities or {}),
+            label=a["source_tier"].value,
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Stage 5 — freshness (layer 5)
+# ══════════════════════════════════════════════════════════════════════
+
+class ResourceFreshnessAdapter:
+    """How does this resource age? Timeliness tier + decay Noul.
+
+    A 2014 hip-hop video and a 2026 Halifax rental-market post do not
+    decay alike. This layer feeds the priority ladder so dated material
+    can't win the queue just because it's deep.
+    """
+
+    name = "resource.freshness"
+    evaluation_mode = "one_shot"
+
+    def subject_key(self, resource: dict) -> str:
+        return resource.get("url") or f"title::{resource.get('title', '?')}"
+
+    def candidate_keys(self, resource: dict, candidates: Any = None) -> list[str]:
+        return list(FRESHNESS_LADDER)
+
+    def state_for(self, resource: dict, candidates: Any = None) -> str:
+        parts = [f"title: {resource.get('title', '')}"]
+        if resource.get("captured_at"):
+            parts.append(f"captured: {resource['captured_at']}")
+        if resource.get("content_type"):
+            parts.append(f"type: {resource['content_type']}")
+        if resource.get("theme"):
+            parts.append(f"theme: {resource['theme']}")
+        return "\n".join(parts)
+
+    def questions_for(self, resource, candidates, candidate_key):
+        return {
+            "freshness": Choice(
+                instructions=(
+                    "How does this resource age? 'evergreen' = stays true "
+                    "(technique, theory); 'current' = valid now, some "
+                    "shelf life; 'dated' = mostly stale, maybe one useful "
+                    "idea; 'stale' = overtaken."
+                ),
+                criteria={f: f for f in FRESHNESS_LADDER},
+            ),
+            "decay": Noul(
+                instructions=(
+                    "How fast does this lose value? High decay = prices, "
+                    "news, tool versions. Low decay = fundamentals."
+                ),
+                criteria=None,
+            ),
+        }
+
+    def canonical(self, response, candidate_key):
+        a = response.answers
+        return dict(
+            choice=a["freshness"].value,
+            noul=getattr(a["decay"], "value", None),
+            confidence=getattr(a["freshness"], "confidence", None),
+            probabilities=dict(a["freshness"].probabilities or {}),
+            label=a["freshness"].value,
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Stage 6 — next action (layer 6)
+# ══════════════════════════════════════════════════════════════════════
+
+class ResourceActionAdapter:
+    """What do we DO with this resource? Action + commitment + payoff.
+
+    Terminal layer: turns a queue verdict into an executable next step.
+    'queue P2' becomes 'watch_now P2' vs 'reference P2' — the row now
+    says what happens when it reaches the top of the stack.
+    """
+
+    name = "resource.action"
+    evaluation_mode = "one_shot"
+
+    def subject_key(self, resource: dict) -> str:
+        return resource.get("url") or f"title::{resource.get('title', '?')}"
+
+    def candidate_keys(self, resource: dict, candidates: Any = None) -> list[str]:
+        return list(ACTIONS)
+
+    def state_for(self, resource: dict, candidates: Any = None) -> str:
+        parts = [f"title: {resource.get('title', '')}"]
+        for k in ("theme", "depth", "freshness", "source_tier"):
+            if resource.get(k):
+                parts.append(f"{k}: {resource[k]}")
+        if resource.get("verdict"):
+            parts.append(f"verdict: {resource['verdict']}")
+        if resource.get("priority"):
+            parts.append(f"priority: {resource['priority']}")
+        return "\n".join(parts)
+
+    def questions_for(self, resource, candidates, candidate_key):
+        return {
+            "action": Choice(
+                instructions=(
+                    "Pick the next concrete step for this resource. "
+                    "'watch_now' = consume it today; 'deep_read' = "
+                    "study it closely; 'skim' = 5-minute scan; 'apply' = "
+                    "do something with it (build/implement/write); "
+                    "'reference' = keep as lookup material."
+                ),
+                criteria={a: a for a in ACTIONS},
+            ),
+            "commitment": Noul(
+                instructions=(
+                    "Does this deserve a real attention slot, or is it a "
+                    "skim/reference item?"
+                ),
+                criteria=None,
+            ),
+            "payoff": Score(
+                instructions=(
+                    "How much is likely to come back from doing this — "
+                    "knowledge, money, or craft?"
+                ),
+                criteria=["low", "medium", "high", "transformative"],
+            ),
+        }
+
+    def canonical(self, response, candidate_key):
+        a = response.answers
+        return dict(
+            choice=a["action"].value,
+            noul=getattr(a["commitment"], "value", None),
+            score=getattr(a["payoff"], "value", None),
+            confidence=getattr(a["action"], "confidence", None),
+            probabilities=dict(a["action"].probabilities or {}),
+            label=a["action"].value,
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  Pipeline
 # ══════════════════════════════════════════════════════════════════════
 
@@ -246,11 +449,18 @@ class TriageResult:
     resource: dict
     theme: Optional[str] = None
     theme_confidence: Optional[float] = None
+    source_tier: Optional[str] = None
+    source_cred: Optional[float] = None
     depth: Optional[str] = None
     substance: Optional[bool] = None
+    freshness: Optional[str] = None
+    decay: Optional[float] = None
     verdict: Optional[str] = None
     attention: Optional[bool] = None
     priority: Optional[str] = None
+    action: Optional[str] = None
+    commitment: Optional[float] = None
+    payoff: Optional[str] = None
     route: Optional[str] = None
 
     def emit(self) -> dict:
@@ -264,22 +474,33 @@ class TriageResult:
             "priority": self.priority,
             "verdict": self.verdict,
             "depth": self.depth,
-            "notes": f"theme_confidence={self.theme_confidence}",
+            "notes": (f"theme={self.theme}; source={self.source_tier}; "
+                      f"freshness={self.freshness}; action={self.action}; "
+                      f"commitment={self.commitment}; payoff={self.payoff}"),
         }
 
 
 class TriagePipeline:
-    """Chain the three stages over one connector grid (shared db)."""
+    """Chain the six stages over one connector grid (shared db).
+
+    theme -> source -> content -> freshness -> consumption -> action
+    """
 
     def __init__(self, db_path="triage.db", client=None,
                  themes: Mapping[str, str] = DEFAULT_THEMES):
         self.themes = dict(themes)
         self._theme = DecisionConnector(ResourceThemeAdapter(themes),
                                         db_path=db_path, client=client)
+        self._source = DecisionConnector(ResourceSourceAdapter(),
+                                         db_path=db_path, client=client)
         self._content = DecisionConnector(ResourceContentAdapter(),
                                           db_path=db_path, client=client)
+        self._fresh = DecisionConnector(ResourceFreshnessAdapter(),
+                                        db_path=db_path, client=client)
         self._consume = DecisionConnector(ResourceConsumptionAdapter(),
                                           db_path=db_path, client=client)
+        self._action = DecisionConnector(ResourceActionAdapter(),
+                                         db_path=db_path, client=client)
 
     def triage(self, resource: dict, force: bool = False) -> TriageResult:
         # Stage 1 — theme
@@ -290,7 +511,16 @@ class TriagePipeline:
         staged = dict(resource)
         staged["theme"], staged["depth"] = theme, None
 
-        # Stage 2 — content
+        # Stage 2 — source
+        rows = self._source.evaluate(staged, None, force=force)
+        swin = max(rows, key=lambda r: r.noul or 0)
+        source_tier = swin.choice
+        _cred = swin.raw.get("adapter_noul")
+        source_cred = _cred if _cred is not None else swin.noul
+
+        staged["source_tier"] = source_tier
+
+        # Stage 3 — content
         rows = self._content.evaluate(staged, None, force=force)
         cwin = max(rows, key=lambda r: r.noul or 0)
         _sub = cwin.raw.get("adapter_noul")
@@ -299,7 +529,16 @@ class TriagePipeline:
 
         staged["depth"] = depth
 
-        # Stage 3 — consumption
+        # Stage 4 — freshness
+        rows = self._fresh.evaluate(staged, None, force=force)
+        fwin = max(rows, key=lambda r: r.noul or 0)
+        freshness = fwin.choice
+        _dec = fwin.raw.get("adapter_noul")
+        decay = _dec if _dec is not None else fwin.noul
+
+        staged["freshness"] = freshness
+
+        # Stage 5 — consumption
         rows = self._consume.evaluate(staged, None, force=force)
         vwin = max(rows, key=lambda r: r.noul or 0)
         verdict = vwin.choice
@@ -308,16 +547,30 @@ class TriagePipeline:
         pri = vwin.score  # int 1..5 from the grid, or a level label from live
         priority = pri if isinstance(pri, str) else f"P{int(pri)}" if pri else None
 
+        staged["verdict"], staged["priority"] = verdict, priority
+
+        # Stage 6 — action
+        rows = self._action.evaluate(staged, None, force=force)
+        awin = max(rows, key=lambda r: r.noul or 0)
+        action = awin.choice
+        _com = awin.raw.get("adapter_noul")
+        commitment = _com if _com is not None else awin.noul
+        payoff = awin.score
+
         return TriageResult(
             resource=resource,
             theme=theme, theme_confidence=theme_conf,
+            source_tier=source_tier, source_cred=source_cred,
             depth=depth, substance=bool(substance) if substance is not None else None,
+            freshness=freshness, decay=decay,
             verdict=verdict, attention=bool(attention) if attention is not None else None,
             priority=priority, route=self._consume.route(vwin),
+            action=action, commitment=commitment, payoff=payoff,
         )
 
     def close(self):
-        for c in (self._theme, self._content, self._consume):
+        for c in (self._theme, self._source, self._content,
+                  self._fresh, self._consume, self._action):
             c.close()
 
 
@@ -351,8 +604,18 @@ class ScriptedClient:
         return v
 
     def system_one(self, state, questions):
-        key = "theme" if "theme" in questions else (
-            "content" if "depth" in questions else "consume")
+        if "theme" in questions:
+            key = "theme"
+        elif "source_tier" in questions:
+            key = "source"
+        elif "depth" in questions:
+            key = "content"
+        elif "freshness" in questions:
+            key = "freshness"
+        elif "verdict" in questions:
+            key = "consume"
+        else:
+            key = "action"
         choice, probs, conf, noul, score = self._take(key)
         self.calls.append(key)
         class R:
@@ -360,14 +623,27 @@ class ScriptedClient:
         r = R()
         probs_map = {k: v for k, v in probs.items()}
         r.answers = {
+            # stage 1 — theme
             "theme": _A(value=choice, probabilities=probs_map, confidence=conf),
             "theme_confidence": _A(value=noul),
+            # stage 2 — source
+            "source_tier": _A(value=choice, probabilities=probs_map, confidence=conf),
+            "credibility": _A(value=noul),
+            # stage 3 — content
             "depth": _A(value=choice, probabilities=probs_map, confidence=conf),
             "substance": _A(value=noul),
             "specificity": _A(value=score),
+            # stage 4 — freshness
+            "freshness": _A(value=choice, probabilities=probs_map, confidence=conf),
+            "decay": _A(value=noul),
+            # stage 5 — consumption
             "verdict": _A(value=choice, probabilities=probs_map, confidence=conf),
             "attention": _A(value=noul),
             "priority": _A(value=score),
+            # stage 6 — action
+            "action": _A(value=choice, probabilities=probs_map, confidence=conf),
+            "commitment": _A(value=noul),
+            "payoff": _A(value=score),
         }
         return r
 
@@ -441,12 +717,32 @@ def _default_script():
         pack("skip", 0.8, 0.8, 0.25, "P5"),
         pack("queue", 0.55, 0.55, 0.6, "P2"),
     ]
-    return {"theme": themes, "content": depths, "consume": consumptions}
+    sources = [
+        pack("known_channel", 0.7, 0.7, 0.6, None),     # vLLM lab
+        pack("first_party", 0.8, 0.8, 0.7, None),       # workshop rebuild
+        pack("aggregator", 0.6, 0.6, 0.3, None),        # listicle mill
+        pack("known_channel", 0.75, 0.75, 0.65, None),  # real-estate data
+    ]
+    freshness = [
+        pack("current", 0.6, 0.6, 0.55, None),   # LLM tooling, decays
+        pack("evergreen", 0.8, 0.8, 0.75, None), # machine restoration
+        pack("dated", 0.7, 0.7, 0.4, None),      # listicle already stale
+        pack("current", 0.65, 0.65, 0.6, None),  # market numbers move
+    ]
+    actions = [
+        pack("deep_read", 0.5, 0.5, 0.7, "high"),
+        pack("apply", 0.5, 0.5, 0.75, "transformative"),
+        pack("skim", 0.6, 0.6, 0.3, "low"),
+        pack("reference", 0.55, 0.55, 0.45, "medium"),
+    ]
+    return {"theme": themes, "content": depths, "consume": consumptions,
+            "source": sources, "freshness": freshness, "action": actions}
 
 
 if __name__ == "__main__":
     print("=" * 68)
-    print("  RESOURCE TRIAGE — theme → content → consumption")
+    print("  RESOURCE TRIAGE — 6-layer decision tree")
+    print("  theme → source → content → freshness → consumption → action")
     print("  mode: OFFLINE (scripted oracle)")
     print("=" * 68)
 
@@ -457,11 +753,15 @@ if __name__ == "__main__":
         t = pipe.triage(res)
         print(f"\n▶ {res['title'][:58]}")
         print(f"  theme      : {t.theme}  (conf={t.theme_confidence})")
+        print(f"  source     : {t.source_tier}  credibility={t.source_cred:.2f}")
         print(f"  content    : {t.depth}  substance={t.substance}")
+        print(f"  freshness  : {t.freshness}  decay={t.decay:.2f}")
         print(f"  consumption: {t.verdict}  priority={t.priority}  "
               f"attention={t.attention}  route={t.route}")
+        print(f"  action     : {t.action}  commitment={t.commitment:.2f}  "
+              f"payoff={t.payoff}")
 
-    print(f"\nJEV CALLS: {len(client.calls)}  (3 per resource × {len(DEMO_RESOURCES)})")
+    print(f"\nJEV CALLS: {len(client.calls)}  (6 per resource × {len(DEMO_RESOURCES)})")
     pipe.close()
     import os
     for f in ("_triage_demo.db",):

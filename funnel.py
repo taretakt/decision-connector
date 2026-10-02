@@ -122,15 +122,30 @@ def canned_script(n):
     def pack(choice, prob, conf, noul, score):
         return (choice, {choice: prob}, conf, noul, score)
 
+    tiers = ["first_party", "known_channel", "known_channel",
+             "aggregator", "unknown", "unknown"]
+    fresh = ["evergreen", "current", "current", "dated", "stale", "stale"]
+    actions = ["deep_read", "watch_now", "apply", "skim", "reference", "reference"]
+    payoffs = ["high", "high", "transformative", "low", "medium", "medium"]
+
     return {
         "theme": [pack(themes[i % 6], confs[i % 6], confs[i % 6], 0.8, None)
                   for i in range(n)],
+        "source": [pack(tiers[i % 6], confs[i % 6], confs[i % 6],
+                        0.8 if tiers[i % 6] in ("first_party", "known_channel")
+                        else 0.35, None) for i in range(n)],
         "content": [pack(depths[i % 6], confs[i % 6], confs[i % 6],
                          0.7 if depths[i % 6] != "fluff" else 0.3, "generic")
                     for i in range(n)],
+        "freshness": [pack(fresh[i % 6], confs[i % 6], confs[i % 6],
+                           0.75 if fresh[i % 6] != "stale" else 0.3, None)
+                      for i in range(n)],
         "consume": [pack(acts[i % 6], confs[i % 6], confs[i % 6],
                          0.75 if acts[i % 6] != "skip" else 0.3, prios[i % 6])
                     for i in range(n)],
+        "action": [pack(actions[i % 6], confs[i % 6], confs[i % 6],
+                        0.7 if actions[i % 6] not in ("skim", "reference") else 0.35,
+                        payoffs[i % 6]) for i in range(n)],
     }
 
 
@@ -173,7 +188,7 @@ def write_queue(rows, db_path, tag="funnel"):
 # ── CLI ────────────────────────────────────────────────────────────────
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Batch resource triage (theme → content → consumption)")
+    ap = argparse.ArgumentParser(description="Batch resource triage (6-layer decision tree: theme→source→content→freshness→consumption→action)")
     ap.add_argument("--file", help="corpus file (timeline / tabbed / URL lines)")
     ap.add_argument("--stdin", action="store_true", help="read URL lines from stdin")
     ap.add_argument("--limit", type=int, default=0, help="max resources (0 = all)")
@@ -217,12 +232,18 @@ def main(argv=None):
     themes = Counter(t.theme for t in results)
     verdicts = Counter(t.verdict for t in results)
     depths = Counter(t.depth for t in results)
+    sources = Counter(t.source_tier for t in results)
+    freshness = Counter(t.freshness for t in results)
+    actions = Counter(t.action for t in results)
     human = [t for t in results if t.route != "act"]
 
     print(f"funnel: {len(resources)} resources | judgment: {mode}")
     print(f"  themes    : " + "  ".join(f"{k}:{v}" for k, v in themes.most_common()))
+    print(f"  sources   : " + "  ".join(f"{k}:{v}" for k, v in sources.most_common()))
+    print(f"  freshness : " + "  ".join(f"{k}:{v}" for k, v in freshness.most_common()))
     print(f"  verdicts  : " + "  ".join(f"{k}:{v}" for k, v in verdicts.most_common()))
     print(f"  depth     : " + "  ".join(f"{k}:{v}" for k, v in depths.most_common()))
+    print(f"  actions   : " + "  ".join(f"{k}:{v}" for k, v in actions.most_common()))
     print(f"  needs human eyes: {len(human)}/{len(results)}")
     for t in human[:10]:
         print(f"    - {t.resource.get('title', '')[:56]:<56} route={t.route}")

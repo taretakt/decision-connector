@@ -79,7 +79,7 @@ def test_empty_input():
 
 def test_canned_script_shape():
     s = funnel.canned_script(3)
-    assert set(s) == {"theme", "content", "consume"}
+    assert set(s) == {"theme", "source", "content", "freshness", "consume", "action"}
     for stage, lst in s.items():
         assert len(lst) == 3
         choice, probs, conf, noul, score = lst[0]
