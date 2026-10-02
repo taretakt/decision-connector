@@ -10,6 +10,7 @@ The connector owns the parts of decision automation that should be identical no 
 - **SQLite solution grid** — every judgment, every candidate, every score lands in one queryable table with provenance
 - **Invalidation** — forget only what changed, never nuke the grid
 - **Confidence routing** — low-confidence judgments route to a human, high-confidence ones flow straight through
+- **Loop-friendly batches** — `is_terminal()` tells a loop when a batch can run unattended; `flush()` closes the grid cleanly so scripts exit safely
 - **Cost accounting** — every call is priced (`$42 / billion input tokens`, ~400 tokens per call)
 - **Non-text input bridge** — structured state in, structured decisions out, no prose required
 
@@ -35,7 +36,7 @@ Two evaluation modes:
 
 ## Domains
 
-Four domains shipped — two reference adapters inside the substrate's self-test, two plug-in files that prove the pattern:
+Five domains shipped — two reference adapters inside the substrate's self-test, three plug-in files that prove the pattern:
 
 | Domain | subject | candidates | ships as |
 |---|---|---|---|
@@ -49,7 +50,7 @@ Four domains shipped — two reference adapters inside the substrate's self-test
 
 ### Adding a domain
 
-One file, six members, zero substrate changes:
+One file, six members, zero substrate changes — full contract in [CONTRIBUTING.md](CONTRIBUTING.md):
 
 ```python
 class MyAdapter:
@@ -71,7 +72,14 @@ uv run python3 test_call_efficiency.py   # call-count assertions
 uv run python3 deal_scoring_adapter.py   # plug-in domain demo
 uv run python3 catalog_watchdog_adapter.py
 uv run python3 resource_triage_adapter.py
-uv run pytest                            # test suite
+uv run pytest                            # test suite (25 tests)
+```
+
+Real-data example — run the resource funnel against a timeline of your own:
+
+```bash
+uv run python3 examples/resource_triage.py                # inline sample corpus
+YT_TIMELINE=~/youtube_learning_timeline.md uv run python3 examples/resource_triage.py
 ```
 
 Live mode (requires the Jev SDK in your environment):
@@ -92,7 +100,10 @@ The SQLite grid path is configurable via `DECISION_GRID_DB` (default: `./grid.db
 | `catalog_watchdog_adapter.py` | Plug-in domain: page pair × verdicts |
 | `resource_triage_adapter.py` | Plug-in domain: resource funnel (theme → content → consumption) |
 | `test_call_efficiency.py` | Call-count and cache-hit assertions |
+| `examples/resource_triage.py` | Real-data funnel demo (timeline → queue rows) |
 | `tests/` | Pytest suite |
+| `CONTRIBUTING.md` | The adapter contract, written down |
+| `PR_REVIEW_BOT.md` | How the Codex PR-review bot works and how to toggle it |
 
 ## License
 
