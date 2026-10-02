@@ -22,3 +22,4 @@ jobs:
       - run: uv run python catalog_watchdog_adapter.py
       - run: uv run python resource_triage_adapter.py
       - run: uv run python examples/resource_triage.py
+      - run: uv run python funnel.py --file examples/resource_triage.py --limit 3

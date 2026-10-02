@@ -11,6 +11,7 @@ The connector owns the parts of decision automation that should be identical no 
 - **Invalidation** — forget only what changed, never nuke the grid
 - **Confidence routing** — low-confidence judgments route to a human, high-confidence ones flow straight through
 - **Loop-friendly batches** — `is_terminal()` tells a loop when a batch can run unattended; `flush()` closes the grid cleanly so scripts exit safely
+- **Batch funnel CLI** — run the whole pipeline over a corpus file with `funnel.py`, flag what needs human eyes, emit queue-ready rows
 - **Cost accounting** — every call is priced (`$42 / billion input tokens`, ~400 tokens per call)
 - **Non-text input bridge** — structured state in, structured decisions out, no prose required
 
@@ -72,7 +73,8 @@ uv run python3 test_call_efficiency.py   # call-count assertions
 uv run python3 deal_scoring_adapter.py   # plug-in domain demo
 uv run python3 catalog_watchdog_adapter.py
 uv run python3 resource_triage_adapter.py
-uv run pytest                            # test suite (25 tests)
+uv run python3 funnel.py --file <corpus>  # batch: corpus → verdicts → queue rows
+uv run pytest                            # test suite (43 tests)
 ```
 
 Real-data example — run the resource funnel against a timeline of your own:
@@ -99,6 +101,7 @@ The SQLite grid path is configurable via `DECISION_GRID_DB` (default: `./grid.db
 | `deal_scoring_adapter.py` | Plug-in domain: listing × grades |
 | `catalog_watchdog_adapter.py` | Plug-in domain: page pair × verdicts |
 | `resource_triage_adapter.py` | Plug-in domain: resource funnel (theme → content → consumption) |
+| `funnel.py` | Batch CLI: corpus intake → pipeline → human-flag → queue write |
 | `test_call_efficiency.py` | Call-count and cache-hit assertions |
 | `examples/resource_triage.py` | Real-data funnel demo (timeline → queue rows) |
 | `tests/` | Pytest suite |
