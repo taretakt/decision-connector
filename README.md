@@ -1,5 +1,7 @@
 # Decision Connector
 
+[![CI](https://github.com/taretakt/decision-connector/actions/workflows/ci.yml/badge.svg)](https://github.com/taretakt/decision-connector/actions/workflows/ci.yml)
+
 A domain-agnostic substrate between **structured systems** and **Jev's typed decision primitives** (Choice / Noul / Score).
 
 The connector owns the parts of decision automation that should be identical no matter what you're deciding:
