@@ -560,6 +560,22 @@ class DecisionConnector:
             return "escalate"
         return "act_and_flag"
 
+    def is_terminal(self, decisions: Sequence[Decision], act_above: float = 0.85,
+                    escalate_below: float = 0.60) -> bool:
+        """True when every decision can act unattended.
+
+        The loop-friendly check: a batch is terminal only if every row routes
+        to 'act' — any escalate or act_and_flag means a human should at least
+        see it before the loop moves on.
+        """
+        return all(self.route(d, act_above, escalate_below) == "act"
+                   for d in decisions)
+
+    def flush(self):
+        """Persist pending writes and close the connection (CI-safe)."""
+        self.conn.commit()
+        self.conn.close()
+
     # -- vision bridge --------------------------------------------------
     def evaluate_from_image(self, image_path: str, subject, candidates,
                             extractor, subject_key: Optional[str] = None):
