@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from decision_connector import (
     DecisionConnector,
-    CompatalogFitmentAdapter,
+    FitmentAdapter,
     QCDispositionAdapter,
     cache_key,
     canonical_question_hash,
@@ -98,7 +98,7 @@ def test_one_shot_qc_six_rows_one_call(tmp_path):
 def test_per_candidate_fitment_caches_warm_reruns(tmp_path):
     client = CountingClient()
     c = DecisionConnector(
-        CompatalogFitmentAdapter(),
+        FitmentAdapter(),
         db_path=str(tmp_path / "grid.db"),
         client=client,
     )

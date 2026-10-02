@@ -29,7 +29,7 @@ from typing import Any, Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 from decision_connector import (  # noqa: E402
-    Decision, DecisionConnector, CompatalogFitmentAdapter, QCDispositionAdapter,
+    Decision, DecisionConnector, FitmentAdapter, QCDispositionAdapter,
 )
 
 # ── Perturbation primitives ───────────────────────────────────────────

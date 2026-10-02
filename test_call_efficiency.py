@@ -49,7 +49,7 @@ db2 = str(Path(__file__).resolve().parent / "_count2.db")
 if os.path.exists(db2): os.remove(db2)
 veh = {"arku":"CAR-x","piece_type":"Buick Regal","attributes":{"front_rotor_mm":302}}
 parts = {"pad-a":{"name":"A"},"pad-b":{"name":"B"}}
-c2 = DecisionConnector(CompatalogFitmentAdapter(), db_path=db2, client=CountingClient())
+c2 = DecisionConnector(FitmentAdapter(), db_path=db2, client=CountingClient())
 d2 = c2.evaluate(veh, parts)
 print(f"  grid rows written : {len(d2)}")
 print(f"  JEV API CALLS     : {len(calls)}   <-- two candidates need two judgments")

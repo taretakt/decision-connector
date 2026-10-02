@@ -41,7 +41,7 @@ Five domains shipped — two reference adapters inside the substrate's self-test
 
 | Domain | subject | candidates | ships as |
 |---|---|---|---|
-| Compalog fitment | vehicle | parts | reference adapter |
+| Fitment | vehicle | parts | reference adapter |
 | QC disposition | defect signature | dispositions | reference adapter |
 | [Deal scoring](deal_scoring_adapter.py) | listing | grades (buy / hold / pass / scrap) | adapter file |
 | [Catalog watchdog](catalog_watchdog_adapter.py) | page pair | verdicts (no_digest / digest / escalate) | adapter file |

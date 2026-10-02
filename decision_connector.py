@@ -2,7 +2,7 @@
 # decision_connector.py
 #
 # A domain-agnostic connector between structured systems and Jev's typed
-# decision primitives. Compatalog fitment is the reference adapter; QC
+# decision primitives. Part fitment is the reference adapter; QC
 # disposition is the second, proving the abstraction carries.
 #
 # Design contract
@@ -140,13 +140,13 @@ class DomainAdapter(Protocol):
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Reference adapter 1 — Compatalog fitment
+#  Reference adapter 1 — part fitment
 # ══════════════════════════════════════════════════════════════════════
 
-class CompatalogFitmentAdapter:
+class FitmentAdapter:
     """vehicle × part → fits / doesn't fit, with confidence."""
 
-    name = "compatalog.fitment"
+    name = "fitment"
     # Each part needs its own compatibility judgment ("does part A fit?"),
     # so N candidates genuinely requires N calls.
     evaluation_mode = "per_candidate"
@@ -713,9 +713,9 @@ if __name__ == "__main__":
                           "caliper_type": "brembo-6piston"},
     }
 
-    print("\n── DOMAIN 1: compatalog.fitment ─────────────────────────────")
+    print("\n── DOMAIN 1: fitment ─────────────────────────────")
     fake_fit = {"fitment": ("pad-slide-econo", 0.95, 1, {"pad-slide-econo": 0.95}, 0.91)}
-    c1 = DecisionConnector(CompatalogFitmentAdapter(), db_path=db,
+    c1 = DecisionConnector(FitmentAdapter(), db_path=db,
                            client=_FakeClient(fake_fit))
     d1 = c1.evaluate(vehicle, parts)
     for d in d1:
@@ -762,7 +762,7 @@ if __name__ == "__main__":
     print(f"\n  totals: {c2.conn.execute('SELECT COUNT(*) c FROM grid').fetchone()['c']} cells")
 
     print("\n── ADAPTER CONTRACT CHECK ───────────────────────────────────")
-    for adp in (CompatalogFitmentAdapter(), QCDispositionAdapter()):
+    for adp in (FitmentAdapter(), QCDispositionAdapter()):
         ok = isinstance(adp, DomainAdapter)
         print(f"  {adp.name:32s} satisfies DomainAdapter: {ok} {'✓' if ok else '✗'}")
 
