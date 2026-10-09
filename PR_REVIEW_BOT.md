@@ -17,8 +17,9 @@ work OpenAI's Codex Open Source Fund grants are meant to pay for.
 ## Requirements
 
 - An OpenAI API key stored as the **`OPENAI_API_KEY`** repository secret
-  (Settings → Secrets and variables → Actions). Without it the job fails fast
-  — add a placeholder value only if you actually have credits to spend.
+  (Settings → Secrets and variables → Actions). Until it's set, the Codex step
+  **skips cleanly — empty result, no failed run** — so PRs stay green before
+  credits land. Set the secret to turn the review on.
 
 ## Toggle
 
