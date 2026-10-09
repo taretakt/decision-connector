@@ -11,7 +11,7 @@ The connector owns the parts of decision automation that should be identical no 
 - **Invalidation** — forget only what changed, never nuke the grid
 - **Confidence routing** — low-confidence judgments route to a human, high-confidence ones flow straight through
 - **Loop-friendly batches** — `is_terminal()` tells a loop when a batch can run unattended; `flush()` closes the grid cleanly so scripts exit safely
-- **Scrobbler-hopper funnel** — run the six-layer decision tree over a corpus file with `funnel.py`, enrich each stage with what the scrobbler already knows (already-queued, already-consumed, channel track record, backlog), dedupe at the gate, and write queue-ready rows into the scrobbler's `queue` table (`--hopper DB`). rows
+- **Scrobbler-hopper funnel** — run the six-layer decision tree over a corpus file with `funnel.py`, enrich each stage with what the scrobbler already knows (already-queued, already-consumed, channel track record, backlog), dedupe at the gate, and write queue-ready rows into the scrobbler's `queue` table (`--hopper DB`)
 - **Cost accounting** — every call is priced (`$42 / billion input tokens`, ~400 tokens per call)
 - **Non-text input bridge** — structured state in, structured decisions out, no prose required
 
@@ -106,8 +106,12 @@ The SQLite grid path is configurable via `DECISION_GRID_DB` (default: `./grid.db
 | `test_call_efficiency.py` | Call-count and cache-hit assertions |
 | `examples/resource_triage.py` | Real-data funnel demo (timeline → queue rows) |
 | `tests/` | Pytest suite |
+| `docs/architecture.md` | How the substrate works — keys, grid, routing, cost, offline/live split |
 | `CONTRIBUTING.md` | The adapter contract, written down |
 | `PR_REVIEW_BOT.md` | How the Codex PR-review bot works and how to toggle it |
+| `CHANGELOG.md` | Release history |
+
+Design: [docs/architecture.md](docs/architecture.md) · Releases: [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 
