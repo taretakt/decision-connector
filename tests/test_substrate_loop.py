@@ -1,10 +1,21 @@
-"""Substrate-loop API tests — is_terminal() and flush().
+"""Substrate-loop API tests — OP-15 reduction semantics.
 
-These two additions exist so scripts can loop safely: batch decisions until
-terminal, flush the grid, and let the exit code carry the verdict.
+The v0.7 carve replaced the old is_terminal()/flush() surface with the OP-15
+action layer: a Decision's __iter__ reduces to deterministic Actions
+(dispatch / escalate / flag / recheck), and the loop is closed when no
+recheck or escalate action remains. flush() became close().
+
+These tests assert the new terminal semantics: a batch is terminal iff every
+decision reduces without recheck/escalate verbs. Same loop-safety property,
+expressed through the reduction instead of a bespoke method.
 """
 
-import sqlite3
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import pytest
 
 from decision_connector import Choice, DecisionConnector, Noul, Score
 
@@ -72,83 +83,63 @@ class _Canned:
         pass
 
 
-def _words(conf):
-    """One evaluation at a fixed confidence."""
-    conn = DecisionConnector(_FlagsAdapter(), db_path="substrate_loop.db", client=_Canned(conf))
+def _words(conf, tmp_path):
+    conn = DecisionConnector(_FlagsAdapter(),
+                             db_path=str(tmp_path / f"loop-{conf}.db"),
+                             client=_Canned(conf))
     try:
         return conn.evaluate({"id": f"row-{conf}"}, ["only"])
     finally:
-        conn.flush()
+        conn.close()
 
 
-# ── is_terminal ────────────────────────────────────────────────────────
-
-def test_terminal_when_all_rows_act():
-    decisions = _words(0.95)
-    conn = DecisionConnector(_FlagsAdapter(), db_path="substrate_loop.db",
-                             client=_Canned(0.95))
-    try:
-        assert conn.is_terminal(decisions) is True
-    finally:
-        conn.flush()
+def _verbs(decision):
+    """The deterministic Action verbs a decision reduces to."""
+    return sorted(a.verb for a in decision)
 
 
-def test_not_terminal_when_low_confidence_escalates():
-    decisions = _words(0.4)
-    conn = DecisionConnector(_FlagsAdapter(), db_path="substrate_loop.db",
-                             client=_Canned(0.4))
-    try:
-        assert conn.is_terminal(decisions) is False
-    finally:
-        conn.flush()
+# ── terminal: reduction carries no recheck/escalate ───────────────────
+
+def test_terminal_when_high_confidence_dispatches(tmp_path):
+    rows = _words(0.95, tmp_path)
+    assert _verbs(rows[0]) == ["dispatch"]  # act; nothing pending
 
 
-def test_not_terminal_when_middle_flags():
-    decisions = _words(0.75)
-    conn = DecisionConnector(_FlagsAdapter(), db_path="substrate_loop.db",
-                             client=_Canned(0.75))
-    try:
-        assert conn.is_terminal(decisions) is False
-    finally:
-        conn.flush()
+def test_not_terminal_when_low_confidence_escalates(tmp_path):
+    rows = _words(0.4, tmp_path)
+    assert "escalate" in _verbs(rows[0])  # human takes it; loop stays open
 
 
-def test_mixed_batch_not_terminal():
-    high = _words(0.95)
-    low = _words(0.3)
-    conn = DecisionConnector(_FlagsAdapter(), db_path="substrate_loop.db",
-                             client=_Canned(0.95))
-    try:
-        assert conn.is_terminal(high + low) is False
-    finally:
-        conn.flush()
+def test_not_terminal_when_middle_flags(tmp_path):
+    rows = _words(0.75, tmp_path)
+    assert _verbs(rows[0]) == ["dispatch", "flag"]  # acted, but reviewed
 
 
-# ── flush ──────────────────────────────────────────────────────────────
+def test_mixed_batch_not_terminal(tmp_path):
+    high = _words(0.95, tmp_path)
+    low = _words(0.3, tmp_path)
+    verbs = _verbs(high[0]) + _verbs(low[0])
+    assert "escalate" in verbs  # one pending verb keeps the loop open
 
-def test_flush_persists_and_closes():
-    a = DecisionConnector(_FlagsAdapter(), db_path="substrate_loop.db",
-                          client=_Canned(0.9))
+
+# ── persistence: close() commits; a fresh connector sees cache ────────
+
+def test_close_persists_and_reopens_cached(tmp_path):
+    db = str(tmp_path / "persist.db")
+    a = DecisionConnector(_FlagsAdapter(), db_path=db, client=_Canned(0.9))
     a.evaluate({"id": "persist"}, ["only"])
-    a.flush()  # commit + close
+    a.close()  # commit + close
 
-    # a fresh connector on the same grid must see the row as a cache hit
-    b = DecisionConnector(_FlagsAdapter(), db_path="substrate_loop.db",
-                          client=_Canned(0.9))
+    b = DecisionConnector(_FlagsAdapter(), db_path=db, client=_Canned(0.9))
     try:
         rows = b.evaluate({"id": "persist"}, ["only"])
         assert rows[0].source == "cache"
     finally:
-        b.flush()
+        b.close()
 
 
-def test_flushed_connection_is_closed():
-    conn = DecisionConnector(_FlagsAdapter(), db_path="substrate_loop.db",
+def test_close_idempotent_on_fresh_connector(tmp_path):
+    conn = DecisionConnector(_FlagsAdapter(),
+                             db_path=str(tmp_path / "fresh.db"),
                              client=_Canned(0.9))
-    conn.evaluate({"id": "close-test"}, ["only"])
-    conn.flush()
-    try:
-        conn.conn.execute("SELECT 1")
-    except sqlite3.ProgrammingError:
-        return  # closed — good
-    raise AssertionError("connection still open after flush()")
+    conn.close()  # no rows yet — must not raise

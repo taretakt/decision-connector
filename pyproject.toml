@@ -18,7 +18,8 @@ classifiers = [
 ]
 
 [tool.setuptools]
-py-modules = ["decision_connector", "bucket_delineation"]
+py-modules = ["decision_connector", "bucket_delineation",
+              "action_iteration", "dispatch", "recheck_driver"]
 
 [dependency-groups]
 dev = ["pytest>=8"]

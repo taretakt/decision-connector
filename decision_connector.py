@@ -18,6 +18,9 @@
 #   state_for()      domain data → Jev state (text/JSON)
 #   questions_for()  domain data → Jev primitives
 #   canonical()      Jev response → canonical Decision
+#   actions_for()    [OPTIONAL 7th] Decision → list[Action] domain verbs.
+#                    Absent → ActionResolver defaults cover dispatch/escalate/
+#                    flag/recheck. Present → overrides/extends the default.
 #
 # The connector supplies the shared substrate:
 #   deterministic cache keys, SQLite solution grid, invalidation, provenance,
@@ -66,7 +69,8 @@ except ImportError:  # allows offline inspection without the SDK
         criteria: Sequence[str] = field(default_factory=list)
         kind: str = "score"
 
-DEFAULT_DB = Path(os.environ.get("DECISION_GRID_DB", "grid.db"))
+DEFAULT_DB = Path(os.path.expanduser(
+    os.environ.get("DECISION_GRID_DB", "~/vault/decision-connector/grid.db")))
 
 # Jev list price: $42 / billion input tokens. Typical call ≈ 400 input tokens.
 COST_PER_CALL_USD = 42 / 1_000_000_000 * 400
@@ -108,6 +112,16 @@ class Decision:
                 f"{self.label or self.choice} "
                 f"noul={self.noul if self.noul is None else round(self.noul, 3)}")
 
+    def __iter__(self):
+        """Reduction — OP-03's missing dunder. Yields the deterministic
+        Action list this verdict implies (dispatch/escalate/flag/recheck).
+
+        __call__ scores; __iter__ reduces. Same fields in, same actions out
+        (see ActionResolver: crc32-keyed, no hash(), no wall-clock keys).
+        """
+        from action_iteration import ActionResolver  # local: avoids import cycle
+        yield from ActionResolver().reduce(self)
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  Adapter protocol — the ONLY domain-aware surface
@@ -140,7 +154,7 @@ class DomainAdapter(Protocol):
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Reference adapter 1 — part fitment
+#  Reference adapter 1 — Part fitment
 # ══════════════════════════════════════════════════════════════════════
 
 class FitmentAdapter:
@@ -194,12 +208,12 @@ class FitmentAdapter:
     def canonical(self, response, candidate_key):
         a = response.answers
         return dict(
-            choice=a["best_match"].value,
-            noul=a["compatible"].value,
-            score=a["difficulty"].value,
+            choice=_ans_value(a["best_match"]),
+            noul=_ans_value(a["compatible"]),
+            score=_ans_value(a["difficulty"]),
             confidence=getattr(a["compatible"], "confidence", None),
             probabilities=dict(a["best_match"].probabilities or {}),
-            label=a["best_match"].value,
+            label=_ans_value(a["best_match"]),
         )
 
 
@@ -228,6 +242,45 @@ class QCDispositionAdapter:
         "ship":      "Within spec; ship as first-quality with no action.",
         "escalate":  "Hold the lot and route to a human QC lead for a call.",
     }
+
+    # 7th adapter member (optional). Domain verbs for the resolver's actions.
+    # Worked example: maps the disposition choice to what the LINE does.
+    ACTION_VERBS = {
+        "scrap":    "scrap-unit",
+        "rework":   "rework-unit",
+        "touch_up": "touch-up",
+        "deviate":  "deviate-ship",
+        "ship":     "release",
+        "escalate": "escalate",
+    }
+
+    def handlers(self) -> dict:
+        """Dispatch hands for this adapter's domain verbs — pairs with
+        actions_for(). escalate falls through to the default handler."""
+        return {
+            "rework-unit": _qc_line_instruction("rework"),
+            "scrap-unit": _qc_line_instruction("scrap"),
+            "touch-up": _qc_line_instruction("touch_up"),
+            "deviate-ship": _qc_line_instruction("deviate"),
+            "release": _qc_line_instruction("release"),
+        }
+
+    def actions_for(self, decision) -> list:
+        """Decision → line-level actions. Extends the resolver default
+        (which still runs first for the route itself); this adds the
+        domain verb. Never raises — always a list."""
+        from action_iteration import Action
+        verb = self.ACTION_VERBS.get(decision.choice or decision.candidate_key,
+                                     "inspect")
+        return [Action(
+            verb=verb,
+            target=decision.candidate_key,
+            owner="ross",
+            authority="delegated",     # QC lead's protocol has authority here
+            urgency=0.85,
+            source_decision=decision.subject_key + "\x1f" + decision.candidate_key,
+            reason=f"QC disposition: {decision.choice or decision.candidate_key}",
+        )]
 
     def subject_key(self, defect: dict) -> str:
         # Signature = class + severity + part family. Finite, cacheable.
@@ -292,12 +345,12 @@ class QCDispositionAdapter:
     def canonical(self, response, candidate_key):
         a = response.answers
         return dict(
-            choice=a["disposition"].value,
-            noul=a["acceptable_to_ship"].value,
-            score=a["judgment_difficulty"].value,
+            choice=_ans_value(a["disposition"]),
+            noul=_ans_value(a["acceptable_to_ship"]),
+            score=_ans_value(a["judgment_difficulty"]),
             confidence=getattr(a["disposition"], "confidence", None),
             probabilities=dict(a["disposition"].probabilities or {}),
-            label=a["disposition"].value,
+            label=_ans_value(a["disposition"]),
         )
 
 
@@ -351,6 +404,25 @@ def canonical_question_hash(candidate_keys: Sequence[str]) -> str:
     """Order-stable: [A,B] and [B,A] are the same question."""
     blob = json.dumps(sorted(candidate_keys), separators=(",", ":"))
     return hashlib.sha256(blob.encode()).hexdigest()
+
+
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  QC dispatch handlers — the OTHER half of the actions_for() pairing
+# ══════════════════════════════════════════════════════════════════════
+
+def _qc_line_instruction(kind: str):
+    """Domain hand for a QC line verb: record the instruction to the outbox."""
+    def handler(ctx):
+        from dispatch import HandlerResult, _outbox_line
+        action = ctx.action
+        line = _outbox_line(ctx.outbox, "qc-instruction", action,
+                            instruction=kind)
+        return HandlerResult(ok=True,
+                             message=f"{kind} instruction issued for {action.target}",
+                             artifact=line)
+    return handler
 
 
 class DecisionConnector:
@@ -560,22 +632,6 @@ class DecisionConnector:
             return "escalate"
         return "act_and_flag"
 
-    def is_terminal(self, decisions: Sequence[Decision], act_above: float = 0.85,
-                    escalate_below: float = 0.60) -> bool:
-        """True when every decision can act unattended.
-
-        The loop-friendly check: a batch is terminal only if every row routes
-        to 'act' — any escalate or act_and_flag means a human should at least
-        see it before the loop moves on.
-        """
-        return all(self.route(d, act_above, escalate_below) == "act"
-                   for d in decisions)
-
-    def flush(self):
-        """Persist pending writes and close the connection (CI-safe)."""
-        self.conn.commit()
-        self.conn.close()
-
     # -- vision bridge --------------------------------------------------
     def evaluate_from_image(self, image_path: str, subject, candidates,
                             extractor, subject_key: Optional[str] = None):
@@ -645,6 +701,26 @@ TRANSPORT = {
 }
 
 
+def _ans_value(ans):
+    """Value of an answer object across SDK shapes.
+
+    Offline fake: _A(value=...) — one shape.
+    Real SDK:     ChoiceAnswer(.choice/.confidence/.probabilities),
+                  NoulAnswer(.noul), ScoreAnswer(.score/.confidence/...).
+    The adapters must never care which is which.
+    """
+    if ans is None:
+        return None
+    v = getattr(ans, "value", None)
+    if v is not None:
+        return v
+    for attr in ("choice", "noul", "score"):
+        v = getattr(ans, attr, None)
+        if v is not None:
+            return v
+    return None
+
+
 def _fake_response(choice, noul, score, probs, conf):
     class _A:
         def __init__(self, **kw): self.__dict__.update(kw)
@@ -694,7 +770,7 @@ if __name__ == "__main__":
     print(f"  mode: {'LIVE' if live else 'OFFLINE self-test'}")
     print("=" * 68)
 
-    db = Path(__file__).with_name("_selftest.db")
+    db = Path(__file__).resolve().parent / "_selftest.db"
     db.parent.mkdir(parents=True, exist_ok=True)
     if db.exists():
         db.unlink()
@@ -773,4 +849,8 @@ if __name__ == "__main__":
 
     c1.close(); c2.close()
     db.unlink()
-    print("\n  Self-test DB cleaned up. Add TYPESAFE_API_KEY for live calls.")
+    print("\n  Self-test DB cleaned up.")
+    if live:
+        print("  Live oracle reachable — TYPESAFE_API_KEY active.")
+    else:
+        print("  Add TYPESAFE_API_KEY for live calls.")

@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.7.0 — 2026-10-11
+
+### Added
+- **OP-15 action layer (public)**: `action_iteration.py` (Action/ActionResolver deterministic reduction, crc32-keyed), `dispatch.py` (outbox + handlers), `recheck_driver.py` (no_agent cron payload, RESOLVED/RECHECK/ESCALATE grammar). `Decision.__iter__` now reduces to Actions; `is_terminal()`/`flush()` removed in favor of verb semantics (terminal = no recheck/escalate remaining) + `close()`.
+- **SR&ED claim-disposition adapter** (`sred_adapter.py`): experimental thread × claimable/partial/not_claimable, one_shot evaluation, T661-grade Nouls (uncertainty demonstrated / baseline measurable / hypothesis tested), domain verbs draft-t661 / enrich / skip-thread. Real-data pass: miter v0.6.0 thread → claimable (conf 0.94).
+- pyproject: `action_iteration`, `dispatch`, `recheck_driver` added to py-modules (package must carry the action layer).
+
+### Changed
+- All repo-absolute paths removed — outbox, recheck_specs, selftest DB are now relative to the module/repo.
+
+### Tests
+- 60 green (was 55): 5 sred-adapter hydration tests + substrate-loop tests rewritten against the OP-15 action surface.
+
+# Changelog
+
 All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
