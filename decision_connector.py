@@ -120,7 +120,8 @@ class Decision:
         (see ActionResolver: crc32-keyed, no hash(), no wall-clock keys).
         """
         from action_iteration import ActionResolver  # local: avoids import cycle
-        yield from ActionResolver().reduce(self)
+        adapter = (self.raw or {}).get("adapter")
+        yield from ActionResolver(adapter=adapter).reduce(self)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -463,6 +464,7 @@ class DecisionConnector:
             probabilities=json.loads(row["probabilities"] or "{}"),
             label=row["label"], source="cache", model=row["model"],
             note=row["note"],
+            raw={"adapter": self.adapter},
         )
 
     def store(self, d: Decision, key: str, qhash: str, source: str = "jev") -> None:
@@ -599,7 +601,8 @@ class DecisionConnector:
                 model=getattr(resp, "model", None) or "jev",
                 raw={**extra, **dict(base.get("raw") or {}),
                      "full_distribution": probs,
-                     "adapter_noul": base.get("noul")},
+                     "adapter_noul": base.get("noul"),
+                     "adapter": self.adapter},
             )
             self.store(d, keys[ck], qhash, source="jev")
             out.append(d)
@@ -612,6 +615,7 @@ class DecisionConnector:
         questions = self.adapter.questions_for(subject, candidates, ck)
         resp = self.client.system_one(state=state, questions=questions)
         kw = self.adapter.canonical(resp, ck)
+        kw.setdefault("raw", {})["adapter"] = self.adapter
         return Decision(
             subject_key=rows, candidate_key=ck,
             model=getattr(resp, "model", None) or "jev", **kw)

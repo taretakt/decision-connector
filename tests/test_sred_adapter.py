@@ -132,3 +132,33 @@ def test_sred_clean_cut_is_a_real_outcome(tmp_path):
     acts = res.reduce(winner)
     assert any(x.verb == "flag" and x.target == "skip-thread" for x in acts)
     c.close()
+
+def test_domain_verbs_fire_through_dunder_live_and_cache(tmp_path):
+    """OP-15 regression: actions_for must fire via Decision.__iter__ on
+    both the live (Jev) path and the cache-hit path. The v0.7 carve lost
+    the adapter reference on the one_shot fan-out; this locks the fix."""
+    from sred_adapter import SredClaimAdapter, _FakeOracle
+    from decision_connector import DecisionConnector
+
+    adapter = SredClaimAdapter()
+    db = str(tmp_path / "g.db")
+    oracle = _FakeOracle(
+        disposition="claimable",
+        probs={"claimable": 0.90, "partial": 0.07, "not_claimable": 0.03},
+        confidence=0.90, uncertainty=0.88, baseline=0.75,
+        hypothesis=0.91, depth=3,
+    )
+    c = DecisionConnector(adapter, db_path=db, client=oracle)
+    subject = {"project": "t", "branch": "main", "commit_range": "a..b",
+               "prs": [], "issues": [], "window": "", "thread": {}}
+    # live path
+    rows = c.evaluate(subject, None)
+    winner = max(rows, key=lambda r: r.noul or 0)
+    verbs = {f"{x.verb}:{x.target}" for x in winner}
+    assert "dispatch:draft-t661" in verbs, f"live path lost domain verb: {verbs}"
+    # cache path
+    rows2 = c.evaluate(subject, None)
+    winner2 = max(rows2, key=lambda r: r.noul or 0)
+    verbs2 = {f"{x.verb}:{x.target}" for x in winner2}
+    assert "dispatch:draft-t661" in verbs2, f"cache path lost domain verb: {verbs2}"
+    c.close()
